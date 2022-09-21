@@ -31,7 +31,7 @@ func main() {
 
 	head := NewHeadProcess(headId)
 	if err := head.InitializeConnections(addresses); err != nil {
-		log.Fatalln("Fatal: ", err.Error())
+		log.Fatalln("Fatal:", err.Error())
 	}
 
 	defer head.recv.Close()
@@ -40,7 +40,7 @@ func main() {
 		defer link.conn.Close()
 	}
 
-	fmt.Println("Listening on: ", head.recv.LocalAddr().String())
+	fmt.Println("Listening on:", head.recv.LocalAddr().String())
 
 	go head.ListenForMessages()
 	head.ListenForInput()

@@ -153,11 +153,10 @@ func (p *HeadProcess) ListenForMessages() {
 		n, _, err := p.recv.ReadFromUDP(buf)
 		msg := message.DecodeToMessage(buf[0:n])
 
-		fmt.Println("Received ", msg.Type, " from ", msg.From)
 		go p.HandleMessage(msg)
 
 		if err != nil {
-			fmt.Println("Error: ", err)
+			fmt.Println("Error:", err)
 		}
 	}
 }
@@ -171,7 +170,7 @@ func (p *HeadProcess) ListenForInput() {
 		for {
 			input, _, err := reader.ReadLine()
 			if err != nil {
-				fmt.Println("Error: ", err.Error())
+				fmt.Println("Error:", err.Error())
 			}
 			inputChannel <- string(input)
 		}
@@ -179,11 +178,19 @@ func (p *HeadProcess) ListenForInput() {
 
 	for input := range inputChannel {
 		if input == "x" {
-			p.RequestSharedResource()
+			err := p.RequestSharedResource()
+			if err != nil {
+				fmt.Println("Error:", err.Error())
+			}
 		} else {
 			fmt.Println("Invalid input")
 		}
 	}
+}
+
+func (p *HeadProcess) AlterState(nextState State) {
+	p.state = nextState
+	fmt.Println("State:", p.state+"; Clock:", p.clock.timestamp)
 }
 
 func (p *HeadProcess) IncrementClock(increment int) {
@@ -200,10 +207,9 @@ func (p *HeadProcess) MatchAndIncrementClock(timestamp int) {
 	p.IncrementClock(increment)
 }
 
-func (p *HeadProcess) RequestSharedResource() {
+func (p *HeadProcess) RequestSharedResource() error {
 	if p.state != Released {
-		fmt.Println("ignored, not in released state")
-		return
+		return errors.New("input ignored, process not in released state")
 	}
 
 	p.IncrementClock(1)
@@ -212,11 +218,40 @@ func (p *HeadProcess) RequestSharedResource() {
 	for _, link := range p.links {
 		go p.SendMessage(msg, link.conn)
 	}
+	return nil
 }
 
-func (p *HeadProcess) AlterState(nextState State) {
-	p.state = nextState
-	fmt.Println("State: ", p.state)
+func (p *HeadProcess) ReplyToRequest(recipientId int) error {
+	reply := message.NewMessage(p.id, p.clock.timestamp, message.Reply)
+	link, err := p.GetLinkWithId(recipientId)
+	if err != nil {
+		return err
+	}
+	go p.SendMessage(reply, link.conn)
+	return nil
+}
+
+func (p *HeadProcess) AcquireSharedResource() {
+	p.IncrementClock(1)
+	p.AlterState(Held)
+	msg := message.NewMessage(p.id, p.clock.timestamp, message.Acquire)
+	go p.SendMessage(msg, p.sharedResource)
+
+	fmt.Println("Acquired CS; Clock:", p.clock.timestamp)
+	time.Sleep(consts.CSTimeout)
+}
+
+func (p *HeadProcess) ReleaseSharedResource() error {
+	p.IncrementClock(1)
+	fmt.Println("Released CS; Clock:", p.clock.timestamp)
+	p.AlterState(Released)
+	for _, id := range p.replyQueue {
+		if err := p.ReplyToRequest(id); err != nil {
+			return err
+		}
+	}
+	p.replyQueue = make([]int, 0)
+	return nil
 }
 
 func (p *HeadProcess) HandleMessage(msg *message.Message) error {
@@ -226,40 +261,22 @@ func (p *HeadProcess) HandleMessage(msg *message.Message) error {
 
 		if p.state == Held || (p.state == Wanted && msg.Clock < p.clock.timestamp) {
 			p.replyQueue = append(p.replyQueue, msg.From)
-		} else {
-			reply := message.NewMessage(p.id, p.clock.timestamp, message.Reply)
-			link, err := p.GetLinkWithId(msg.From)
-			if err != nil {
-				return err
-			}
-			go p.SendMessage(reply, link.conn)
+		} else if err := p.ReplyToRequest(msg.From); err != nil {
+			return err
 		}
+
 	case message.Reply:
 		p.MatchAndIncrementClock(msg.Clock)
 		p.responded++
 
-		if p.responded == len(p.links) {
+		if p.responded == len(p.links) { // Received replies from every process
 			p.responded = 0
 
-			// Acquire CS
-			msg := message.NewMessage(p.id, p.clock.timestamp, message.Acquire)
-			go p.SendMessage(msg, p.sharedResource)
-			fmt.Println("Acquired CS on timestamp ", p.clock.timestamp)
-			p.AlterState(Held)
-			time.Sleep(time.Second * 2)
-			fmt.Println("Left CS")
+			p.AcquireSharedResource()
 
-			// Release
-			p.AlterState(Released)
-			for _, id := range p.replyQueue {
-				link, err := p.GetLinkWithId(id)
-				if err != nil {
-					return err
-				}
-				reply := message.NewMessage(p.id, p.clock.timestamp, message.Reply)
-				go p.SendMessage(reply, link.conn)
+			if err := p.ReleaseSharedResource(); err != nil {
+				return err
 			}
-			p.replyQueue = make([]int, 0)
 		}
 	}
 	return nil

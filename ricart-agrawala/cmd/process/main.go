@@ -2,14 +2,17 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
+
+	"github.com/ricart-agrawala/lib/consts"
 )
 
 func parseArguments(args []string) (int, []string) {
 	headId, err := strconv.Atoi(args[1])
 	if err != nil {
-		fmt.Println("Error: ", err.Error())
+		log.Fatalln("Fatal: ", err.Error())
 	}
 
 	ports := args[2:]
@@ -17,7 +20,7 @@ func parseArguments(args []string) (int, []string) {
 
 	addresses := make([]string, numberOfProcesses)
 	for i, port := range ports {
-		addresses[i] = ip + port
+		addresses[i] = consts.LocalIp + port
 	}
 
 	return headId, addresses
@@ -28,7 +31,7 @@ func main() {
 
 	head := NewHeadProcess(headId)
 	if err := head.InitializeConnections(addresses); err != nil {
-		fmt.Println("Error: ", err.Error())
+		log.Fatalln("Fatal: ", err.Error())
 	}
 
 	defer head.recv.Close()

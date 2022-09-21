@@ -2,15 +2,22 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
+
+	"github.com/ricart-agrawala/lib/consts"
+	"github.com/ricart-agrawala/lib/message"
 )
 
-var protocol string = "udp"
-var address string = "127.0.0.1:10000"
-
 func main() {
-	addr, _ := net.ResolveUDPAddr(protocol, address)
-	connection, _ := net.ListenUDP(protocol, addr)
+	addr, err := net.ResolveUDPAddr(consts.UDPProtocol, consts.LocalIp+consts.SharedResourcePort)
+	if err != nil {
+		log.Fatalln("Fatal: ", err.Error())
+	}
+	connection, err := net.ListenUDP(consts.UDPProtocol, addr)
+	if err != nil {
+		log.Fatalln("Fatal: ", err.Error())
+	}
 
 	defer connection.Close()
 
@@ -18,7 +25,9 @@ func main() {
 
 	for {
 		n, addr, err := connection.ReadFromUDP(buf)
-		fmt.Println("Received ", string(buf[0:n]), " from ", addr)
+		msg := message.DecodeToMessage(buf[0:n])
+
+		fmt.Println("Received ", msg.Content, " from ", addr)
 
 		if err != nil {
 			fmt.Println("Error: ", err)

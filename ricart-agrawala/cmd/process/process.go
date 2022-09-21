@@ -2,11 +2,15 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/ricart-agrawala/lib/consts"
+	"github.com/ricart-agrawala/lib/message"
 )
 
 type Process struct {
@@ -37,7 +41,7 @@ func (p *HeadProcess) InitializeConnections(addresses []string) error {
 		return err
 	}
 
-	if err := p.initializeSharedResourceLink(ip + sharedResourcePort); err != nil {
+	if err := p.initializeSharedResourceLink(consts.LocalIp + consts.SharedResourcePort); err != nil {
 		return err
 	}
 
@@ -45,13 +49,13 @@ func (p *HeadProcess) InitializeConnections(addresses []string) error {
 }
 
 func (p *HeadProcess) initializeReceiver(address string) error {
-	recvAddr, err := net.ResolveUDPAddr(protocol, address)
+	recvAddr, err := net.ResolveUDPAddr(consts.UDPProtocol, address)
 	if err != nil {
 		return err
 	}
 	p.addr = recvAddr
 
-	recv, err := net.ListenUDP(protocol, recvAddr)
+	recv, err := net.ListenUDP(consts.UDPProtocol, recvAddr)
 	if err != nil {
 		return err
 	}
@@ -73,13 +77,13 @@ func (p *HeadProcess) initializeProcessLinks(addresses []string) error {
 			id: procId,
 		}
 
-		addr, err := net.ResolveUDPAddr(protocol, address)
+		addr, err := net.ResolveUDPAddr(consts.UDPProtocol, address)
 		if err != nil {
 			return err
 		}
 		process.addr = addr
 
-		conn, err := net.DialUDP(protocol, nil, addr)
+		conn, err := net.DialUDP(consts.UDPProtocol, nil, addr)
 		if err != nil {
 			return err
 		}
@@ -93,11 +97,11 @@ func (p *HeadProcess) initializeProcessLinks(addresses []string) error {
 }
 
 func (p *HeadProcess) initializeSharedResourceLink(address string) error {
-	sharedResourceAddr, err := net.ResolveUDPAddr(protocol, address)
+	sharedResourceAddr, err := net.ResolveUDPAddr(consts.UDPProtocol, address)
 	if err != nil {
 		return err
 	}
-	conn, err := net.DialUDP(protocol, nil, sharedResourceAddr)
+	conn, err := net.DialUDP(consts.UDPProtocol, nil, sharedResourceAddr)
 	if err != nil {
 		return err
 	}
@@ -106,17 +110,27 @@ func (p *HeadProcess) initializeSharedResourceLink(address string) error {
 	return nil
 }
 
-func (p *HeadProcess) BroadcastMessage(message string) {
+func (p *HeadProcess) GetLinkWithId(id int) (*Process, error) {
 	for _, link := range p.links {
-		go func(link *Process) {
-			msg := message + "; from " + strconv.Itoa(p.id)
-			buf := []byte(msg)
+		if link.id == id {
+			return link, nil
+		}
+	}
+	return &Process{}, errors.New("no link with id " + strconv.Itoa(id))
+}
 
-			_, err := link.conn.Write(buf)
-			if err != nil {
-				fmt.Println(msg, err)
-			}
-		}(link)
+func (p *HeadProcess) SendMessage(msg *message.Message, conn *net.UDPConn) error {
+	buf := msg.EncodeToBytes()
+	_, err := conn.Write(buf)
+	if err != nil {
+		fmt.Println(msg, err)
+	}
+	return err
+}
+
+func (p *HeadProcess) BroadcastMessage(msg *message.Message) {
+	for _, link := range p.links {
+		go p.SendMessage(msg, link.conn)
 	}
 }
 
@@ -125,7 +139,9 @@ func (p *HeadProcess) ListenForMessages() {
 
 	for {
 		n, addr, err := p.recv.ReadFromUDP(buf)
-		fmt.Println("Received ", string(buf[0:n]), " from ", addr)
+		msg := message.DecodeToMessage(buf[0:n])
+
+		fmt.Println("Received ", msg.Content, " from ", addr)
 
 		if err != nil {
 			fmt.Println("Error: ", err)
@@ -147,9 +163,10 @@ func (p *HeadProcess) ListenForInput() {
 
 	for {
 		select {
-		case message, valid := <-inputChannel:
+		case content, valid := <-inputChannel:
 			if valid {
-				p.BroadcastMessage(message)
+				msg := message.NewMessage(p.id, p.clock, content)
+				p.BroadcastMessage(msg)
 			} else {
 				fmt.Println("channel closed")
 			}
@@ -157,4 +174,12 @@ func (p *HeadProcess) ListenForInput() {
 			time.Sleep(time.Second * 1)
 		}
 	}
+}
+
+func (p *HeadProcess) RequestSharedResource() {
+}
+
+func (p *HeadProcess) AcquireSharedResource() {
+	msg := message.NewMessage(p.id, p.clock, "cs")
+	p.SendMessage(msg, p.sharedResource)
 }

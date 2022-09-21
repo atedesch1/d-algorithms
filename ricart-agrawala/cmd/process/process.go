@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ricart-agrawala/lib/consts"
@@ -19,17 +20,37 @@ type Process struct {
 	conn *net.UDPConn
 }
 
+type State uint
+
+const (
+	Wanted   State = 0
+	Held     State = 1
+	Released State = 2
+)
+
+type Clock struct {
+	timestamp int
+	mutex     *sync.Mutex
+}
+
 type HeadProcess struct {
-	id             int
-	clock          int
-	addr           *net.UDPAddr
-	recv           *net.UDPConn
-	links          []*Process
+	id    int
+	clock Clock
+	state State
+
+	addr *net.UDPAddr
+	recv *net.UDPConn
+
+	links []*Process
+
 	sharedResource *net.UDPConn
+
+	replyQueue []int
+	responded  int
 }
 
 func NewHeadProcess(id int) *HeadProcess {
-	return &HeadProcess{id: id, clock: 0}
+	return &HeadProcess{id: id, clock: Clock{timestamp: 0, mutex: &sync.Mutex{}}, state: Released, responded: 0, replyQueue: make([]int, 0)}
 }
 
 func (p *HeadProcess) InitializeConnections(addresses []string) error {
@@ -59,8 +80,8 @@ func (p *HeadProcess) initializeReceiver(address string) error {
 	if err != nil {
 		return err
 	}
-	p.recv = recv
 
+	p.recv = recv
 	return nil
 }
 
@@ -122,26 +143,18 @@ func (p *HeadProcess) GetLinkWithId(id int) (*Process, error) {
 func (p *HeadProcess) SendMessage(msg *message.Message, conn *net.UDPConn) error {
 	buf := msg.EncodeToBytes()
 	_, err := conn.Write(buf)
-	if err != nil {
-		fmt.Println(msg, err)
-	}
 	return err
-}
-
-func (p *HeadProcess) BroadcastMessage(msg *message.Message) {
-	for _, link := range p.links {
-		go p.SendMessage(msg, link.conn)
-	}
 }
 
 func (p *HeadProcess) ListenForMessages() {
 	buf := make([]byte, 1024)
 
 	for {
-		n, addr, err := p.recv.ReadFromUDP(buf)
+		n, _, err := p.recv.ReadFromUDP(buf)
 		msg := message.DecodeToMessage(buf[0:n])
 
-		fmt.Println("Received ", msg.Content, " from ", addr)
+		fmt.Println("Received ", msg.Type, " from ", msg.From)
+		go p.HandleMessage(msg)
 
 		if err != nil {
 			fmt.Println("Error: ", err)
@@ -156,30 +169,89 @@ func (p *HeadProcess) ListenForInput() {
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
 		for {
-			text, _, _ := reader.ReadLine()
-			inputChannel <- string(text)
+			input, _, _ := reader.ReadLine()
+			inputChannel <- string(input)
 		}
 	}()
 
-	for {
-		select {
-		case content, valid := <-inputChannel:
-			if valid {
-				msg := message.NewMessage(p.id, p.clock, content)
-				p.BroadcastMessage(msg)
-			} else {
-				fmt.Println("channel closed")
-			}
-		default:
-			time.Sleep(time.Second * 1)
+	for input := range inputChannel {
+		if input == "x" {
+			p.RequestSharedResource()
+		} else {
+			fmt.Println("Invalid input")
 		}
 	}
 }
 
-func (p *HeadProcess) RequestSharedResource() {
+func (p *HeadProcess) IncrementClock(increment int) {
+	p.clock.mutex.Lock()
+	p.clock.timestamp = p.clock.timestamp + increment
+	p.clock.mutex.Unlock()
 }
 
-func (p *HeadProcess) AcquireSharedResource() {
-	msg := message.NewMessage(p.id, p.clock, "cs")
-	p.SendMessage(msg, p.sharedResource)
+func (p *HeadProcess) MatchAndIncrementClock(timestamp int) {
+	increment := 1
+	if dif := timestamp - p.clock.timestamp; dif > 0 {
+		increment += dif
+	}
+	p.IncrementClock(increment)
+}
+
+func (p *HeadProcess) RequestSharedResource() {
+	if p.state != Released {
+		fmt.Println("ignored, not in released state")
+		return
+	}
+
+	p.IncrementClock(1)
+	msg := message.NewMessage(p.id, int(p.clock.timestamp), message.Request)
+	for _, link := range p.links {
+		go p.SendMessage(msg, link.conn)
+	}
+}
+
+func (p *HeadProcess) HandleMessage(msg *message.Message) error {
+	switch msg.Type {
+	case message.Request:
+		p.MatchAndIncrementClock(msg.Clock)
+
+		if p.state == Held || (p.state == Wanted && msg.Clock < p.clock.timestamp) {
+			p.replyQueue = append(p.replyQueue, msg.From)
+		} else {
+			reply := message.NewMessage(p.id, p.clock.timestamp, message.Reply)
+			link, err := p.GetLinkWithId(msg.From)
+			if err != nil {
+				return err
+			}
+			go p.SendMessage(reply, link.conn)
+		}
+	case message.Reply:
+		p.MatchAndIncrementClock(msg.Clock)
+		p.responded++
+
+		if p.responded == len(p.links) {
+			p.responded = 0
+
+			// Acquire CS
+			p.state = Held
+			msg := message.NewMessage(p.id, p.clock.timestamp, message.Acquire)
+			go p.SendMessage(msg, p.sharedResource)
+			fmt.Println("Acquired CS on timestamp ", p.clock.timestamp)
+			time.Sleep(time.Second * 2)
+			fmt.Println("Left CS")
+
+			// Release
+			p.state = Released
+			for _, id := range p.replyQueue {
+				link, err := p.GetLinkWithId(id)
+				if err != nil {
+					return err
+				}
+				reply := message.NewMessage(p.id, p.clock.timestamp, message.Reply)
+				go p.SendMessage(reply, link.conn)
+			}
+			p.replyQueue = make([]int, 0)
+		}
+	}
+	return nil
 }

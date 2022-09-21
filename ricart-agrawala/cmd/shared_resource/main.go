@@ -21,13 +21,15 @@ func main() {
 
 	defer connection.Close()
 
+	fmt.Println("Listening on: ", connection.LocalAddr().String())
+
 	buf := make([]byte, 1024)
 
 	for {
-		n, addr, err := connection.ReadFromUDP(buf)
+		n, _, err := connection.ReadFromUDP(buf)
 		msg := message.DecodeToMessage(buf[0:n])
 
-		fmt.Println("Received ", msg.Content, " from ", addr)
+		fmt.Println(msg.Type, " by ", msg.From)
 
 		if err != nil {
 			fmt.Println("Error: ", err)

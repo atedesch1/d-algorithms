@@ -6,17 +6,25 @@ import (
 	"log"
 )
 
+type MessageType string
+
+const (
+	Request MessageType = "REQUEST"
+	Reply   MessageType = "REPLY"
+	Acquire MessageType = "ACQUIRE"
+)
+
 type Message struct {
-	From    int
-	Clock   int
-	Content string
+	From  int
+	Clock int
+	Type  MessageType
 }
 
-func NewMessage(fromId int, senderClock int, content string) *Message {
+func NewMessage(fromId int, senderClock int, msgType MessageType) *Message {
 	return &Message{
-		From:    fromId,
-		Clock:   senderClock,
-		Content: content,
+		From:  fromId,
+		Clock: senderClock,
+		Type:  msgType,
 	}
 }
 
@@ -30,8 +38,8 @@ func (m *Message) EncodeToBytes() []byte {
 	return buf.Bytes()
 }
 
-func DecodeToMessage(s []byte) Message {
-	p := Message{}
+func DecodeToMessage(s []byte) *Message {
+	p := &Message{}
 	dec := gob.NewDecoder(bytes.NewReader(s))
 	err := dec.Decode(&p)
 	if err != nil {

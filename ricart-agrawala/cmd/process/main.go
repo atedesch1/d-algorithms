@@ -1,77 +1,44 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"net"
 	"os"
 	"strconv"
-	"time"
 )
 
-func broadcastMessage(message string, pool ProcessPool) {
-	for _, process := range pool.neighbors {
-		go func(process *Process) {
-			msg := message + "; from " + strconv.Itoa(pool.local.id)
-			buf := []byte(msg)
-			_, err := process.conn.Write(buf)
-			if err != nil {
-				fmt.Println(msg, err)
-			}
-		}(process)
+func parseArguments(args []string) (int, []string) {
+	headId, err := strconv.Atoi(args[1])
+	if err != nil {
+		fmt.Println("Error: ", err.Error())
 	}
-}
 
-func handleInput(pool ProcessPool) {
-	inputChannel := make(chan string)
+	ports := args[2:]
+	numberOfProcesses := len(ports)
 
-	// Read input
-	go func() {
-		reader := bufio.NewReader(os.Stdin)
-		for {
-			text, _, _ := reader.ReadLine()
-			inputChannel <- string(text)
-		}
-	}()
-
-	for {
-		select {
-		case message, valid := <-inputChannel:
-			if valid {
-				broadcastMessage(message, pool)
-			} else {
-				fmt.Println("channel closed")
-			}
-		default:
-			time.Sleep(time.Second * 1)
-		}
+	addresses := make([]string, numberOfProcesses)
+	for i, port := range ports {
+		addresses[i] = ip + port
 	}
-}
 
-func listenForMessages(listener *net.UDPConn) {
-	buf := make([]byte, 1024)
-
-	for {
-		n, addr, err := listener.ReadFromUDP(buf)
-		fmt.Println("Received ", string(buf[0:n]), " from ", addr)
-
-		if err != nil {
-			fmt.Println("Error: ", err)
-		}
-	}
+	return headId, addresses
 }
 
 func main() {
-	pool, err := InitProcessPool()
-	if err != nil {
-		fmt.Println(err)
+	headId, addresses := parseArguments(os.Args)
+
+	head := NewHeadProcess(headId)
+	if err := head.InitializeConnections(addresses); err != nil {
+		fmt.Println("Error: ", err.Error())
 	}
 
-	defer pool.local.conn.Close()
-	for _, conn := range pool.neighbors {
-		defer conn.conn.Close()
+	defer head.recv.Close()
+	defer head.sharedResource.Close()
+	for _, link := range head.links {
+		defer link.conn.Close()
 	}
 
-	go listenForMessages(pool.local.conn)
-	handleInput(pool)
+	fmt.Println("Listening on: ", head.recv.LocalAddr().String())
+
+	go head.ListenForMessages()
+	head.ListenForInput()
 }

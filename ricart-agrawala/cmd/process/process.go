@@ -1,85 +1,160 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
 	"net"
 	"os"
 	"strconv"
+	"time"
 )
-
-var protocol string = "udp"
-var ip string = "127.0.0.1"
 
 type Process struct {
 	id   int
+	addr *net.UDPAddr
 	conn *net.UDPConn
 }
 
-type ProcessPool struct {
-	local     *Process
-	neighbors []*Process
+type HeadProcess struct {
+	id             int
+	clock          int
+	addr           *net.UDPAddr
+	recv           *net.UDPConn
+	links          []*Process
+	sharedResource *net.UDPConn
 }
 
-func registerProcess(id int, address string) (*Process, error) {
-	var process *Process
-
-	addr, err := net.ResolveUDPAddr(protocol, address)
-	if err != nil {
-		return process, err
-	}
-	conn, err := net.DialUDP(protocol, nil, addr)
-	if err != nil {
-		return process, err
-	}
-
-	process = &Process{
-		id:   id,
-		conn: conn,
-	}
-
-	return process, nil
+func NewHeadProcess(id int) *HeadProcess {
+	return &HeadProcess{id: id, clock: 0}
 }
 
-func InitProcessPool() (ProcessPool, error) {
-	var pool ProcessPool
-
-	id, err := strconv.Atoi(os.Args[1])
-	if err != nil {
-		return pool, err
-	}
-	ports := os.Args[2:]
-	localPort := ports[id-1]
-	localAddrStr := ip + localPort
-
-	// Register local process
-	localAddr, err := net.ResolveUDPAddr(protocol, localAddrStr)
-	if err != nil {
-		return pool, err
-	}
-	conn, err := net.ListenUDP(protocol, localAddr)
-	if err != nil {
-		return pool, err
-	}
-	pool.local = &Process{
-		id:   id,
-		conn: conn,
+func (p *HeadProcess) InitializeConnections(addresses []string) error {
+	if err := p.initializeReceiver(addresses[p.id-1]); err != nil {
+		return err
 	}
 
-	// Register neighbor processes links
-	for i, port := range ports {
+	if err := p.initializeProcessLinks(addresses); err != nil {
+		return err
+	}
+
+	if err := p.initializeSharedResourceLink(ip + sharedResourcePort); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p *HeadProcess) initializeReceiver(address string) error {
+	recvAddr, err := net.ResolveUDPAddr(protocol, address)
+	if err != nil {
+		return err
+	}
+	p.addr = recvAddr
+
+	recv, err := net.ListenUDP(protocol, recvAddr)
+	if err != nil {
+		return err
+	}
+	p.recv = recv
+
+	return nil
+}
+
+func (p *HeadProcess) initializeProcessLinks(addresses []string) error {
+	var links []*Process
+
+	for i, address := range addresses {
 		procId := i + 1
-		procAddress := ip + port
-
-		if procId == id {
+		if procId == p.id {
 			continue
 		}
 
-		process, err := registerProcess(procId, procAddress)
-		if err != nil {
-			return pool, err
+		process := &Process{
+			id: procId,
 		}
 
-		pool.neighbors = append(pool.neighbors, process)
+		addr, err := net.ResolveUDPAddr(protocol, address)
+		if err != nil {
+			return err
+		}
+		process.addr = addr
+
+		conn, err := net.DialUDP(protocol, nil, addr)
+		if err != nil {
+			return err
+		}
+		process.conn = conn
+
+		links = append(links, process)
 	}
 
-	return pool, err
+	p.links = links
+	return nil
+}
+
+func (p *HeadProcess) initializeSharedResourceLink(address string) error {
+	sharedResourceAddr, err := net.ResolveUDPAddr(protocol, address)
+	if err != nil {
+		return err
+	}
+	conn, err := net.DialUDP(protocol, nil, sharedResourceAddr)
+	if err != nil {
+		return err
+	}
+
+	p.sharedResource = conn
+	return nil
+}
+
+func (p *HeadProcess) BroadcastMessage(message string) {
+	for _, link := range p.links {
+		go func(link *Process) {
+			msg := message + "; from " + strconv.Itoa(p.id)
+			buf := []byte(msg)
+
+			_, err := link.conn.Write(buf)
+			if err != nil {
+				fmt.Println(msg, err)
+			}
+		}(link)
+	}
+}
+
+func (p *HeadProcess) ListenForMessages() {
+	buf := make([]byte, 1024)
+
+	for {
+		n, addr, err := p.recv.ReadFromUDP(buf)
+		fmt.Println("Received ", string(buf[0:n]), " from ", addr)
+
+		if err != nil {
+			fmt.Println("Error: ", err)
+		}
+	}
+}
+
+func (p *HeadProcess) ListenForInput() {
+	inputChannel := make(chan string)
+
+	// Read input
+	go func() {
+		reader := bufio.NewReader(os.Stdin)
+		for {
+			text, _, _ := reader.ReadLine()
+			inputChannel <- string(text)
+		}
+	}()
+
+	for {
+		select {
+		case message, valid := <-inputChannel:
+			if valid {
+				p.BroadcastMessage(message)
+			} else {
+				fmt.Println("channel closed")
+			}
+		default:
+			time.Sleep(time.Second * 1)
+		}
+	}
 }

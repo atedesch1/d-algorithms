@@ -20,12 +20,12 @@ type Process struct {
 	conn *net.UDPConn
 }
 
-type State uint
+type State string
 
 const (
-	Wanted   State = 0
-	Held     State = 1
-	Released State = 2
+	Wanted   State = "WANTED"
+	Held     State = "HELD"
+	Released State = "RELEASED"
 )
 
 type Clock struct {
@@ -169,7 +169,10 @@ func (p *HeadProcess) ListenForInput() {
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
 		for {
-			input, _, _ := reader.ReadLine()
+			input, _, err := reader.ReadLine()
+			if err != nil {
+				fmt.Println("Error: ", err.Error())
+			}
 			inputChannel <- string(input)
 		}
 	}()
@@ -204,10 +207,16 @@ func (p *HeadProcess) RequestSharedResource() {
 	}
 
 	p.IncrementClock(1)
-	msg := message.NewMessage(p.id, int(p.clock.timestamp), message.Request)
+	p.AlterState(Wanted)
+	msg := message.NewMessage(p.id, p.clock.timestamp, message.Request)
 	for _, link := range p.links {
 		go p.SendMessage(msg, link.conn)
 	}
+}
+
+func (p *HeadProcess) AlterState(nextState State) {
+	p.state = nextState
+	fmt.Println("State: ", p.state)
 }
 
 func (p *HeadProcess) HandleMessage(msg *message.Message) error {
@@ -233,15 +242,15 @@ func (p *HeadProcess) HandleMessage(msg *message.Message) error {
 			p.responded = 0
 
 			// Acquire CS
-			p.state = Held
 			msg := message.NewMessage(p.id, p.clock.timestamp, message.Acquire)
 			go p.SendMessage(msg, p.sharedResource)
 			fmt.Println("Acquired CS on timestamp ", p.clock.timestamp)
+			p.AlterState(Held)
 			time.Sleep(time.Second * 2)
 			fmt.Println("Left CS")
 
 			// Release
-			p.state = Released
+			p.AlterState(Released)
 			for _, id := range p.replyQueue {
 				link, err := p.GetLinkWithId(id)
 				if err != nil {

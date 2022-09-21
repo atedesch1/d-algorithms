@@ -257,16 +257,16 @@ func (p *HeadProcess) ReleaseSharedResource() error {
 func (p *HeadProcess) HandleMessage(msg *message.Message) error {
 	switch msg.Type {
 	case message.Request:
-		p.MatchAndIncrementClock(msg.Clock)
+		p.MatchAndIncrementClock(msg.Timestamp)
 
-		if p.state == Held || (p.state == Wanted && msg.Clock < p.clock.timestamp) {
+		if p.state == Held || (p.state == Wanted && msg.Timestamp < p.clock.timestamp) {
 			p.replyQueue = append(p.replyQueue, msg.From)
 		} else if err := p.ReplyToRequest(msg.From); err != nil {
 			return err
 		}
 
 	case message.Reply:
-		p.MatchAndIncrementClock(msg.Clock)
+		p.MatchAndIncrementClock(msg.Timestamp)
 		p.responded++
 
 		if p.responded == len(p.links) { // Received replies from every process

@@ -29,7 +29,7 @@ func main() {
 		n, _, err := connection.ReadFromUDP(buf)
 		msg := message.DecodeToMessage(buf[0:n])
 
-		fmt.Println(msg.Type, "by", msg.From)
+		fmt.Println("Acquired by", msg.From)
 
 		if err != nil {
 			fmt.Println("Error:", err)

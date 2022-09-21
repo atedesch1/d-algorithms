@@ -15,16 +15,16 @@ const (
 )
 
 type Message struct {
-	From  int
-	Clock int
-	Type  MessageType
+	From      int
+	Timestamp int
+	Type      MessageType
 }
 
-func NewMessage(fromId int, senderClock int, msgType MessageType) *Message {
+func NewMessage(fromId int, timestamp int, msgType MessageType) *Message {
 	return &Message{
-		From:  fromId,
-		Clock: senderClock,
-		Type:  msgType,
+		From:      fromId,
+		Timestamp: timestamp,
+		Type:      msgType,
 	}
 }
 

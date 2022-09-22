@@ -153,7 +153,7 @@ func (p *HeadProcess) ListenForMessages() {
 		n, _, err := p.recv.ReadFromUDP(buf)
 		msg := message.DecodeToMessage(buf[0:n])
 
-		go p.HandleMessage(msg)
+		go p.handleMessage(msg)
 
 		if err != nil {
 			fmt.Println("Error:", err)
@@ -178,44 +178,44 @@ func (p *HeadProcess) ListenForInput() {
 
 	for input := range inputChannel {
 		if input == "x" {
-			err := p.RequestSharedResource()
+			err := p.requestSharedResource()
 			if err != nil {
 				fmt.Println("Error:", err.Error())
 			}
 		} else if input == strconv.Itoa(p.id) {
-			p.IncrementClock(1)
+			p.incrementClock(1)
 		} else {
 			fmt.Println("Invalid input")
 		}
 	}
 }
 
-func (p *HeadProcess) AlterState(nextState State) {
+func (p *HeadProcess) alterState(nextState State) {
 	p.state = nextState
 	fmt.Println("State:", p.state+"; Clock:", p.clock.timestamp)
 }
 
-func (p *HeadProcess) IncrementClock(increment int) {
+func (p *HeadProcess) incrementClock(increment int) {
 	p.clock.mutex.Lock()
 	p.clock.timestamp = p.clock.timestamp + increment
 	p.clock.mutex.Unlock()
 }
 
-func (p *HeadProcess) MatchAndIncrementClock(timestamp int) {
+func (p *HeadProcess) matchAndincrementClock(timestamp int) {
 	increment := 1
 	if dif := timestamp - p.clock.timestamp; dif > 0 {
 		increment += dif
 	}
-	p.IncrementClock(increment)
+	p.incrementClock(increment)
 }
 
-func (p *HeadProcess) RequestSharedResource() error {
+func (p *HeadProcess) requestSharedResource() error {
 	if p.state != Released {
 		return errors.New("input ignored, process not in released state")
 	}
 
-	p.IncrementClock(1)
-	p.AlterState(Wanted)
+	p.incrementClock(1)
+	p.alterState(Wanted)
 	msg := message.NewMessage(p.id, p.clock.timestamp, message.Request)
 	for _, link := range p.links {
 		go p.SendMessage(msg, link.conn)
@@ -223,7 +223,7 @@ func (p *HeadProcess) RequestSharedResource() error {
 	return nil
 }
 
-func (p *HeadProcess) ReplyToRequest(recipientId int) error {
+func (p *HeadProcess) replyToRequest(recipientId int) error {
 	reply := message.NewMessage(p.id, p.clock.timestamp, message.Reply)
 	link, err := p.GetLinkWithId(recipientId)
 	if err != nil {
@@ -233,9 +233,9 @@ func (p *HeadProcess) ReplyToRequest(recipientId int) error {
 	return nil
 }
 
-func (p *HeadProcess) AcquireSharedResource() {
-	p.IncrementClock(1)
-	p.AlterState(Held)
+func (p *HeadProcess) acquireSharedResource() {
+	p.incrementClock(1)
+	p.alterState(Held)
 	msg := message.NewMessage(p.id, p.clock.timestamp, message.Acquire)
 	go p.SendMessage(msg, p.sharedResource)
 
@@ -243,12 +243,12 @@ func (p *HeadProcess) AcquireSharedResource() {
 	time.Sleep(consts.CSTimeout)
 }
 
-func (p *HeadProcess) ReleaseSharedResource() error {
-	p.IncrementClock(1)
+func (p *HeadProcess) releaseSharedResource() error {
+	p.incrementClock(1)
 	fmt.Println("Released CS; Clock:", p.clock.timestamp)
-	p.AlterState(Released)
+	p.alterState(Released)
 	for _, id := range p.replyQueue {
-		if err := p.ReplyToRequest(id); err != nil {
+		if err := p.replyToRequest(id); err != nil {
 			return err
 		}
 	}
@@ -256,27 +256,27 @@ func (p *HeadProcess) ReleaseSharedResource() error {
 	return nil
 }
 
-func (p *HeadProcess) HandleMessage(msg *message.Message) error {
+func (p *HeadProcess) handleMessage(msg *message.Message) error {
 	switch msg.Type {
 	case message.Request:
-		p.MatchAndIncrementClock(msg.Timestamp)
+		p.matchAndincrementClock(msg.Timestamp)
 
 		if p.state == Held || (p.state == Wanted && msg.Timestamp < p.clock.timestamp) {
 			p.replyQueue = append(p.replyQueue, msg.From)
-		} else if err := p.ReplyToRequest(msg.From); err != nil {
+		} else if err := p.replyToRequest(msg.From); err != nil {
 			return err
 		}
 
 	case message.Reply:
-		p.MatchAndIncrementClock(msg.Timestamp)
+		p.matchAndincrementClock(msg.Timestamp)
 		p.responded++
 
 		if p.responded == len(p.links) { // Received replies from every process
 			p.responded = 0
 
-			p.AcquireSharedResource()
+			p.acquireSharedResource()
 
-			if err := p.ReleaseSharedResource(); err != nil {
+			if err := p.releaseSharedResource(); err != nil {
 				return err
 			}
 		}

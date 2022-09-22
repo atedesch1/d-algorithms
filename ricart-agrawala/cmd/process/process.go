@@ -182,6 +182,8 @@ func (p *HeadProcess) ListenForInput() {
 			if err != nil {
 				fmt.Println("Error:", err.Error())
 			}
+		} else if input == strconv.Itoa(p.id) {
+			p.IncrementClock(1)
 		} else {
 			fmt.Println("Invalid input")
 		}

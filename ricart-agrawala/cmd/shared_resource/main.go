@@ -22,6 +22,7 @@ func main() {
 	defer connection.Close()
 
 	fmt.Println("Listening on:", connection.LocalAddr().String())
+	fmt.Println("ID: Shared Resource")
 
 	buf := make([]byte, 1024)
 

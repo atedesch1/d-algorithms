@@ -41,6 +41,7 @@ func main() {
 	}
 
 	fmt.Println("Listening on:", head.recv.LocalAddr().String())
+	fmt.Println("ID:", headId)
 
 	go head.ListenForMessages()
 	head.ListenForInput()

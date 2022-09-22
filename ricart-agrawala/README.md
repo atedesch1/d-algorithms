@@ -22,8 +22,8 @@ This will make the process listen for messages on port `10000`.
 
 Run `process <ID> <PORTS>` on separate terminals where:
 
-ID: The id of the process that will run on the terminal
-PORTS: The ports of all the running processes. This should follow `:PORT1 :PORT2 ...`.
+- ID: The id of the process that will run on the terminal
+- PORTS: The ports of all the running processes. This should follow `:PORT1 :PORT2 ...`.
 
 Example:
 In this example we will have 2 processes competing for the shared resource.

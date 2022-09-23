@@ -178,8 +178,7 @@ func (p *HeadProcess) ListenForInput() {
 
 	for input := range inputChannel {
 		if input == "x" {
-			err := p.requestSharedResource()
-			if err != nil {
+			if err := p.requestSharedResource(); err != nil {
 				fmt.Println("Error:", err.Error())
 			}
 		} else if input == strconv.Itoa(p.id) {
@@ -197,7 +196,7 @@ func (p *HeadProcess) alterState(nextState State) {
 
 func (p *HeadProcess) incrementClock(increment int) {
 	p.clock.mutex.Lock()
-	p.clock.timestamp = p.clock.timestamp + increment
+	p.clock.timestamp += increment
 	p.clock.mutex.Unlock()
 }
 
@@ -257,18 +256,15 @@ func (p *HeadProcess) releaseSharedResource() error {
 }
 
 func (p *HeadProcess) handleMessage(msg *message.Message) error {
+	p.matchAndincrementClock(msg.Timestamp)
 	switch msg.Type {
 	case message.Request:
-		p.matchAndincrementClock(msg.Timestamp)
-
 		if p.state == Held || (p.state == Wanted && msg.Timestamp < p.clock.timestamp) {
 			p.replyQueue = append(p.replyQueue, msg.From)
 		} else if err := p.replyToRequest(msg.From); err != nil {
 			return err
 		}
-
 	case message.Reply:
-		p.matchAndincrementClock(msg.Timestamp)
 		p.responded++
 
 		if p.responded == len(p.links) { // Received replies from every process

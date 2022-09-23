@@ -233,7 +233,6 @@ func (p *HeadProcess) replyToRequest(recipientId int) error {
 }
 
 func (p *HeadProcess) acquireSharedResource() {
-	p.incrementClock(1)
 	p.alterState(Held)
 	msg := message.NewMessage(p.id, p.clock.timestamp, message.Acquire)
 	go p.SendMessage(msg, p.sharedResource)

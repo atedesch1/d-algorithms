@@ -28,14 +28,14 @@ const (
 	Released State = "RELEASED"
 )
 
-type Clock struct {
-	timestamp int
-	mutex     *sync.Mutex
+type MutexWrap struct {
+	item  interface{}
+	mutex sync.Mutex
 }
 
 type HeadProcess struct {
 	id    int
-	clock Clock
+	clock MutexWrap
 	state State
 
 	addr *net.UDPAddr
@@ -45,12 +45,18 @@ type HeadProcess struct {
 
 	sharedResource *net.UDPConn
 
-	replyQueue []int
-	responded  int
+	replyQueue MutexWrap
+	responded  MutexWrap
 }
 
 func NewHeadProcess(id int) *HeadProcess {
-	return &HeadProcess{id: id, clock: Clock{timestamp: 0, mutex: &sync.Mutex{}}, state: Released, responded: 0, replyQueue: make([]int, 0)}
+	return &HeadProcess{
+		id:         id,
+		clock:      MutexWrap{item: 0, mutex: sync.Mutex{}},
+		state:      Released,
+		responded:  MutexWrap{item: 0, mutex: sync.Mutex{}},
+		replyQueue: MutexWrap{item: make([]int, 0), mutex: sync.Mutex{}},
+	}
 }
 
 func (p *HeadProcess) InitializeConnections(addresses []string) error {
@@ -191,18 +197,18 @@ func (p *HeadProcess) ListenForInput() {
 
 func (p *HeadProcess) alterState(nextState State) {
 	p.state = nextState
-	fmt.Println("State:", p.state+"; Clock:", p.clock.timestamp)
+	fmt.Println("State:", p.state+"; Clock:", p.clock.item.(int))
 }
 
 func (p *HeadProcess) incrementClock(increment int) {
 	p.clock.mutex.Lock()
-	p.clock.timestamp += increment
+	p.clock.item = p.clock.item.(int) + increment
 	p.clock.mutex.Unlock()
 }
 
 func (p *HeadProcess) matchAndincrementClock(timestamp int) {
 	increment := 1
-	if dif := timestamp - p.clock.timestamp; dif > 0 {
+	if dif := timestamp - p.clock.item.(int); dif > 0 {
 		increment += dif
 	}
 	p.incrementClock(increment)
@@ -215,7 +221,7 @@ func (p *HeadProcess) requestSharedResource() error {
 
 	p.incrementClock(1)
 	p.alterState(Wanted)
-	msg := message.NewMessage(p.id, p.clock.timestamp, message.Request)
+	msg := message.NewMessage(p.id, p.clock.item.(int), message.Request)
 	for _, link := range p.links {
 		go p.SendMessage(msg, link.conn)
 	}
@@ -223,7 +229,7 @@ func (p *HeadProcess) requestSharedResource() error {
 }
 
 func (p *HeadProcess) replyToRequest(recipientId int) error {
-	reply := message.NewMessage(p.id, p.clock.timestamp, message.Reply)
+	reply := message.NewMessage(p.id, p.clock.item.(int), message.Reply)
 	link, err := p.GetLinkWithId(recipientId)
 	if err != nil {
 		return err
@@ -234,23 +240,25 @@ func (p *HeadProcess) replyToRequest(recipientId int) error {
 
 func (p *HeadProcess) acquireSharedResource() {
 	p.alterState(Held)
-	msg := message.NewMessage(p.id, p.clock.timestamp, message.Acquire)
+	msg := message.NewMessage(p.id, p.clock.item.(int), message.Acquire)
 	go p.SendMessage(msg, p.sharedResource)
 
-	fmt.Println("Acquired CS; Clock:", p.clock.timestamp)
+	fmt.Println("Acquired CS; Clock:", p.clock.item.(int))
 	time.Sleep(consts.CSTimeout)
 }
 
 func (p *HeadProcess) releaseSharedResource() error {
 	p.incrementClock(1)
-	fmt.Println("Released CS; Clock:", p.clock.timestamp)
+	fmt.Println("Released CS; Clock:", p.clock.item.(int))
 	p.alterState(Released)
-	for _, id := range p.replyQueue {
+	for _, id := range p.replyQueue.item.([]int) {
 		if err := p.replyToRequest(id); err != nil {
 			return err
 		}
 	}
-	p.replyQueue = make([]int, 0)
+	p.replyQueue.mutex.Lock()
+	p.replyQueue.item = make([]int, 0)
+	p.replyQueue.mutex.Unlock()
 	return nil
 }
 
@@ -258,16 +266,22 @@ func (p *HeadProcess) handleMessage(msg *message.Message) error {
 	p.matchAndincrementClock(msg.Timestamp)
 	switch msg.Type {
 	case message.Request:
-		if p.state == Held || (p.state == Wanted && msg.Timestamp < p.clock.timestamp) {
-			p.replyQueue = append(p.replyQueue, msg.From)
+		if p.state == Held || (p.state == Wanted && msg.Timestamp < p.clock.item.(int)) {
+			p.replyQueue.mutex.Lock()
+			p.replyQueue.item = append(p.replyQueue.item.([]int), msg.From)
+			p.replyQueue.mutex.Unlock()
 		} else if err := p.replyToRequest(msg.From); err != nil {
 			return err
 		}
 	case message.Reply:
-		p.responded++
+		p.responded.mutex.Lock()
+		p.responded.item = p.responded.item.(int) + 1
+		p.responded.mutex.Unlock()
 
-		if p.responded == len(p.links) { // Received replies from every process
-			p.responded = 0
+		if p.responded.item == len(p.links) { // Received replies from every process
+			p.responded.mutex.Lock()
+			p.responded.item = 0
+			p.responded.mutex.Unlock()
 
 			p.acquireSharedResource()
 

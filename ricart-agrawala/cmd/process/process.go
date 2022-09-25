@@ -263,10 +263,9 @@ func (p *HeadProcess) releaseSharedResource() error {
 }
 
 func (p *HeadProcess) handleMessage(msg *message.Message) error {
-	p.matchAndincrementClock(msg.Timestamp)
 	switch msg.Type {
 	case message.Request:
-		if p.state == Held || (p.state == Wanted && msg.Timestamp < p.clock.item.(int)) {
+		if p.state == Held || (p.state == Wanted && p.clock.item.(int) < msg.Timestamp) {
 			p.replyQueue.mutex.Lock()
 			p.replyQueue.item = append(p.replyQueue.item.([]int), msg.From)
 			p.replyQueue.mutex.Unlock()
@@ -277,18 +276,21 @@ func (p *HeadProcess) handleMessage(msg *message.Message) error {
 		p.responded.mutex.Lock()
 		p.responded.item = p.responded.item.(int) + 1
 		p.responded.mutex.Unlock()
+	}
 
-		if p.responded.item == len(p.links) { // Received replies from every process
-			p.responded.mutex.Lock()
-			p.responded.item = 0
-			p.responded.mutex.Unlock()
+	p.matchAndincrementClock(msg.Timestamp)
 
-			p.acquireSharedResource()
+	if p.responded.item == len(p.links) { // Received replies from every process
+		p.responded.mutex.Lock()
+		p.responded.item = 0
+		p.responded.mutex.Unlock()
 
-			if err := p.releaseSharedResource(); err != nil {
-				return err
-			}
+		p.acquireSharedResource()
+
+		if err := p.releaseSharedResource(); err != nil {
+			return err
 		}
 	}
+
 	return nil
 }

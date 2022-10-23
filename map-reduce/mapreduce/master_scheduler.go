@@ -18,10 +18,15 @@ func (master *Master) schedule(task *Task, proc string, filePathChan chan string
 
 	log.Printf("Scheduling %v operations\n", proc)
 
+	master.failedOperationChan = make(chan *Operation, RETRY_OPERATION_BUFFER)
+	master.totalOperations = 0
+	master.numCompletedOperations = 0
+
 	counter = 0
 	for filePath = range filePathChan {
 		operation = &Operation{proc, counter, filePath}
 		counter++
+		master.totalOperations++
 
 		worker = <-master.idleWorkerChan
 		wg.Add(1)
@@ -64,7 +69,7 @@ func (master *Master) runOperation(remoteWorker *RemoteWorker, operation *Operat
 		master.idleWorkerChan <- remoteWorker
 		master.numCompletedOperations++
 
-		if master.numCompletedOperations == master.task.NumReduceJobs {
+		if master.numCompletedOperations == master.totalOperations {
 			close(master.failedOperationChan)
 		}
 	}

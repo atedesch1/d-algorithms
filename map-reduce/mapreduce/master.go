@@ -32,6 +32,7 @@ type Master struct {
 
 	// Fault Tolerance
 	failedOperationChan    chan *Operation
+	totalOperations        int
 	numCompletedOperations int
 }
 
@@ -49,8 +50,6 @@ func newMaster(address string) (master *Master) {
 	master.idleWorkerChan = make(chan *RemoteWorker, IDLE_WORKER_BUFFER)
 	master.failedWorkerChan = make(chan *RemoteWorker, IDLE_WORKER_BUFFER)
 	master.totalWorkers = 0
-	master.failedOperationChan = make(chan *Operation, RETRY_OPERATION_BUFFER)
-	master.numCompletedOperations = 0
 	return
 }
 
